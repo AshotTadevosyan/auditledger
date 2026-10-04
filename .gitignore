@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+data/
+backups/
+reports/
+*.sqlite3*
+*.log
+.DS_Store
+.coverage
+test-artifacts/

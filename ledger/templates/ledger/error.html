@@ -1,0 +1,1 @@
+{% extends 'ledger/base.html' %}{% block content %}<div class="empty-state"><h1>We couldn’t complete that request</h1><p>{{ message|default:'The requested record is unavailable. Return to your workspace and try again.' }}</p><a class="button primary" href="{% url 'dashboard' %}">Back to engagements</a></div>{% endblock %}
