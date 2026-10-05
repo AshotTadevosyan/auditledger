@@ -6,3 +6,9 @@
 /* Secondary text remains readable at compact table and form sizes. */
 @media screen{.help-text,.stat-card small,.record-code,.cell-secondary,th,dt,.pagination,.main-footer,.breadcrumb time,.event-heading time,.section-label,.report-disclosure,.sidebar-footer,.info-strip span,.info-strip p{color:#65738a}.form-field fieldset{border:0;padding:0;margin:0}}
 @media print{.report-section{break-before:auto}.section-label{break-after:avoid}.report-counts{grid-template-columns:repeat(4,1fr)}.audit-report th,.audit-report td{padding:7px 12px;font-size:9pt}.report-meta{grid-template-columns:1fr 1fr}.report-fields dt{break-after:avoid}.report-section>h2{break-after:avoid}}
+
+/* Compact readable activity changes; retain every before/after value. */
+.report-event .report-fields>div{padding:5px 0}
+@media print{.report-event .report-fields>div{padding:3px 0;display:block}.report-event .report-fields dt{display:inline;font-size:8pt;margin-right:8px}.report-event .report-fields dd{display:inline;font-size:8.5pt;line-height:1.4}.report-event h3{font-size:10pt}.report-event>p{font-size:8.5pt}}
+
+@media print{.report-record h3,.report-section h2,.report-event h3{break-inside:avoid}}

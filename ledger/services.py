@@ -80,7 +80,7 @@ def entity_errors(obj, state=None):
         if not obj.controls.exists():
             errors.append('At least one related control is required.')
         errors += reviewed_errors(obj.evidence.all(), True)
-        control_ids = set(obj.controls.values_list('id', flat=True))
+        control_ids = {c.pk for c in obj.controls.all()}
         if any(t.control_id not in control_ids for t in obj.tests.all()):
             errors.append('Related tests must belong to the linked controls.')
         if state == 'resolved':
@@ -92,7 +92,7 @@ def entity_errors(obj, state=None):
             errors += text_required(obj, ['resolution_verifier', 'resolution_conclusion'])
             dates = [a.closure_date for a in actions if a.closure_date]
             dates += [t.execution_date for t in obj.tests.all() if t.execution_date]
-            dates += list(obj.closure_evidence.values_list('collection_date', flat=True))
+            dates += [r.collection_date for r in obj.closure_evidence.all()]
             errors += date_errors(obj.resolution_date, 'Resolution date', max(dates, default=None))
             errors += reviewed_errors(obj.closure_evidence.all(), True, 'Closure evidence')
     elif obj.kind == 'action':
@@ -103,12 +103,13 @@ def entity_errors(obj, state=None):
             errors += text_required(obj, ['blocked_reason'])
         if state == 'completed':
             errors += text_required(obj, ['closure_verifier', 'closure_conclusion'])
-            dates = list(obj.closure_evidence.values_list('collection_date', flat=True))
+            dates = [r.collection_date for r in obj.closure_evidence.all()]
             if obj.ready_at:
                 dates.append(timezone.localdate(obj.ready_at))
             dates += [t.execution_date for t in obj.finding.tests.all() if t.execution_date]
             errors += date_errors(obj.closure_date, 'Verification date', max(dates, default=None))
             errors += reviewed_errors(obj.closure_evidence.all(), True, 'Closure evidence')
+            errors += reviewed_errors(obj.evidence.all())
     return errors
 
 
@@ -202,7 +203,7 @@ def set_relationships(obj, relations):
         for row in rows:
             through.objects.get_or_create(engagement=obj.engagement, **{origin_key: obj, target_key: row})
     if obj.kind == 'finding':
-        control_ids = set(obj.controls.values_list('id', flat=True))
+        control_ids = {c.pk for c in obj.controls.all()}
         if any(t.control_id not in control_ids for t in obj.tests.all()):
             fail('Select the controls that own each related test.', 'tests')
 
@@ -212,6 +213,7 @@ def evidence_dependencies(obj):
     dependencies += list(obj.findings.filter(status__in=['open', 'resolved']))
     dependencies += list(obj.closed_findings.filter(status='resolved'))
     dependencies += list(obj.closed_actions.filter(status='completed'))
+    dependencies += list(obj.actions.filter(status='completed'))
     return list({record.pk: record for record in dependencies}.values())
 
 
@@ -220,6 +222,13 @@ def evidence_usage(obj):
     for accessor in ('tests', 'findings', 'closed_findings', 'actions', 'closed_actions'):
         records += list(getattr(obj, accessor).all())
     return list({record.pk: record for record in records}.values())
+
+
+def protect_test(obj):
+    findings = list(obj.findings.filter(status='resolved').order_by('code', 'id'))
+    if findings:
+        fail('Test ' + obj.code + ' supports resolved findings: ' + ', '.join(f.code for f in findings) +
+             '. Reopen every listed finding first (and the engagement if completed). For follow-up testing, create a separate test to retain this execution.')
 
 
 def check_parent(obj):
@@ -233,7 +242,7 @@ def check_parent(obj):
 
 
 @transaction.atomic
-def save_record(kind, data, actor, engagement_id=None, pk=None, version=None, relations=None, reason=''):
+def save_record(kind, data, actor, engagement_id=None, pk=None, version=None, relations=None, reason='', procedure_source=None):
     if kind not in MODELS:
         fail('Unknown record type.')
     relations = relations or {}
@@ -251,6 +260,8 @@ def save_record(kind, data, actor, engagement_id=None, pk=None, version=None, re
         obj = get_current(kind, pk, engagement_id, version)
         engagement = obj if kind == 'engagement' else Engagement.objects.get(pk=obj.engagement_id)
         editable(engagement)
+        if kind == 'test':
+            protect_test(obj)
         if ((kind in ('test', 'action') and obj.status == 'completed') or
                 (kind == 'finding' and obj.status in ('resolved', 'withdrawn'))):
             fail('Reopen this record with a reason before editing it.')
@@ -265,6 +276,11 @@ def save_record(kind, data, actor, engagement_id=None, pk=None, version=None, re
             value = data[field]
             setattr(obj, field, value.strip() if isinstance(value, str) else value)
     check_parent(obj)
+    if kind == 'test' and creating and procedure_source:
+        source_id, source_version, reconciled = procedure_source
+        current_control = Control.objects.get(pk=obj.control_id, engagement_id=engagement.pk)
+        if not reconciled and (str(current_control.pk) != str(source_id) or str(current_control.version) != str(source_version)):
+            raise Conflict('The source control or its version changed. Compare the selected control’s current procedure in a new tab, reconcile your retained procedure, then explicitly confirm reconciliation.')
     if kind == 'test' and creating and not obj.procedure_snapshot:
         # Caller may hold an old model instance. Snapshot the stored procedure
         # inside the write transaction, not that caller's cached object.
@@ -361,6 +377,8 @@ def transition(kind, pk, engagement_id, version, target, actor, reason='', detai
                            (previous == 'ready_for_verification' and target == 'in_progress'))
         if requires_reason and not reason.strip():
             fail('A reason is required for this transition.', 'reason')
+        if kind == 'test':
+            protect_test(obj)
         if kind == 'action':
             check_parent(obj)
             if target == 'blocked':
@@ -371,7 +389,7 @@ def transition(kind, pk, engagement_id, version, target, actor, reason='', detai
             obj.withdrawal_reason = reason
         if kind == 'evidence':
             if previous == 'reviewed' and evidence_dependencies(obj):
-                fail('Reopen completed dependents or replace/unlink open-finding support before resetting this review.')
+                fail('Reference is required by ' + ', '.join(r.code for r in evidence_dependencies(obj)) + '. Reopen completed dependents (including their parent findings); replace/unlink open-finding support before resetting this review.')
             if target == 'reviewed':
                 for name in ('reviewer', 'reviewed_on', 'review_note'):
                     setattr(obj, name, details.get(name))
@@ -450,7 +468,21 @@ def delete_record(kind, pk, engagement_id, version, actor, confirmed=False):
     obj.delete()
 
 
-def readiness(engagement):
+def engagement_records(engagement):
+    """One bounded set of relationship queries, reused by readiness and exports."""
+    paths = {
+        'control': ['test_set'],
+        'test': ['evidence', 'findings'],
+        'finding': ['controls', 'tests', 'evidence', 'closure_evidence', 'actions'],
+        'action': ['evidence', 'closure_evidence', 'finding__tests', 'progress_updates'],
+        'evidence': ['tests', 'findings', 'closed_findings', 'actions', 'closed_actions'],
+    }
+    return {kind: list(MODELS[kind].objects.filter(engagement=engagement)
+                      .prefetch_related(*relations).order_by('code', 'id'))
+            for kind, relations in paths.items()}
+
+
+def readiness(engagement, records=None):
     blockers, warnings = [], []
     def item(target, message, completion_only=False):
         return {'message': message, 'url': target.get_absolute_url(), 'code': target.code, 'completion_only': completion_only}
@@ -459,11 +491,8 @@ def readiness(engagement):
     for name in ('methodology', 'executive_summary'):
         if not getattr(engagement, name).strip():
             blockers.append(item(engagement, name.replace('_', ' ').capitalize() + ' is required for completion.', True))
-    controls = list(Control.objects.filter(engagement=engagement))
-    tests = list(Test.objects.filter(engagement=engagement).prefetch_related('evidence', 'findings'))
-    findings = list(Finding.objects.filter(engagement=engagement).prefetch_related('controls', 'tests', 'evidence', 'closure_evidence', 'actions'))
-    actions = list(Action.objects.filter(engagement=engagement).select_related('finding').prefetch_related('closure_evidence'))
-    evidence = list(Evidence.objects.filter(engagement=engagement))
+    records = records or engagement_records(engagement)
+    controls, tests, findings, actions, evidence = (records[k] for k in ('control', 'test', 'finding', 'action', 'evidence'))
     if not any(not c.retired_at for c in controls):
         blockers.append(item(engagement, 'Add at least one active control.'))
     for control in controls:
@@ -479,7 +508,7 @@ def readiness(engagement):
         else:
             for error in entity_errors(test):
                 blockers.append(item(test, error))
-            if test.result in ('ineffective', 'partially_effective') and not test.no_finding_rationale.strip() and not test.findings.filter(status__in=['open', 'resolved']).exists():
+            if test.result in ('ineffective', 'partially_effective') and not test.no_finding_rationale.strip() and not any(f.status in ('open', 'resolved') for f in test.findings.all()):
                 blockers.append(item(test, 'Link an open/resolved finding or document why no finding was raised.'))
             if test.result == 'unable_to_conclude':
                 warnings.append(item(test, 'Unable to conclude: ' + test.applicability_or_limitation_rationale))

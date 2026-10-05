@@ -159,3 +159,22 @@ If a backup/restore command fails, it reports failure; a partial destination may
 ## Known boundaries
 
 Local, single-user operation is the delivered product. Attachments, integrations, invitations, SSO, email, framework libraries, AI summaries, immutable retention, approvals/signatures, numeric risk scoring and hosted collaboration remain deferred as specified. SQLite-specific scope triggers mean migration to another database backend needs equivalent constraints and tests. Large engagements are paginated in registers, but whole-engagement readiness/export evaluation intentionally reads all records and briefly holds a consistent database transaction; performance at enterprise-scale volumes has not been benchmarked. The print appendix includes activity before/after values and can become lengthy.
+
+## Remediation safeguards and regression checks
+
+Resolved findings protect every linked test, including unfinished tests. To rework an execution, reopen the completed engagement first, then **every resolved finding listed in the error**, then the completed test. Re-completion and resolution rerun validation. For new follow-up work, add a separate test and retain the original execution. Completed actions protect both supporting and closure references; reopen the parent finding when resolved, then every dependent completed action/test before changing the source or resetting review. Open-finding support must still be replaced/unlinked without invalidating the finding. Title-only evidence corrections retain review; linked deletion remains restricted.
+
+Add test from a control records the prefilled source control and version in the form. A changed source or selected control returns a conflict with the submitted procedure retained. Compare the current selected control in another tab, reconcile the snapshot, and explicitly confirm the comparison before saving. Deliberately customized procedures are retained. Service calls without a custom procedure still copy the current stored control procedure inside the write transaction; later control changes do not change existing snapshots.
+
+Test relationship choices include control code/title, execution date, result and status. **Raise finding** on a test opens an unsaved draft with its control/test and evidence preselected; it does not create or open a finding. Findings-register control links provide context. Drafting, relationships and closure fields are grouped. Remediation under a non-open finding explains the required reopening step and does not offer unavailable actions.
+
+Rejected validation, stale-version and handled database-error forms retain navigation/reload warnings. A successful save clears unsaved state; confirming discard permits navigation. Reports use explicit presentation fields, a control–test–result–finding summary, finding-grouped remediation and readable before/after history. Empty lifecycle fields that do not apply are grouped separately from missing information. CSV tables and JSON history remain complete. Readiness and the report builder reuse batched relationships without an external cache.
+
+The optional real-browser regression uses installed Google Chrome on macOS, a temporary fictional database and a test-only injected database failure. Its dependencies are separate from the application's runtime requirements:
+
+```sh
+python -m pip install --target /tmp/auditledger-browser-tools playwright pymupdf
+PYTHONPATH=/tmp/auditledger-browser-tools AUDIT_BROWSER_OUTPUT=/tmp/auditledger-browser-results python scripts/verify_browser.py
+```
+
+It checks actual confirmation/beforeunload dialogs, retained input after validation/conflict/database failures, successful saves, explicit discard, stale procedure reconciliation and contextual finding creation. It captures desktop/narrow layouts and Chrome's A4 print output. When PyMuPDF is available it checks complete long narrative/reference text, page bounds and renders pages for visual inspection. `AUDIT_BROWSER_OUTPUT` is optional; without it the temporary captures are removed after the run. These are fictional verification artifacts, not audit exports. The harness requires loopback/browser execution permissions and the installed Chrome path specified in the script. It does not alter the normal working database.

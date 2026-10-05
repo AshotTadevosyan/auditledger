@@ -24,6 +24,8 @@ HELP = {
 
 class RelatedChoice(forms.ModelMultipleChoiceField):
     def label_from_instance(self, obj):
+        if obj.kind == 'test':
+            return f'{obj.code} · {obj.control.code} — {obj.control.title} · {obj.execution_date or "Undated"} · {obj.get_result_display() or "No result"} / {obj.get_status_display()}'
         state = getattr(obj, 'review_status', getattr(obj, 'status', ''))
         return f'{obj} [{state.replace("_", " ")}]' if state else str(obj)
 
@@ -39,6 +41,13 @@ class RecordForm(forms.ModelForm):
         self.engagement = engagement
         creating = self.instance._state.adding
         self.fields['version'].initial = self.instance.version
+        if kind == 'test' and creating:
+            self.fields['procedure_source_id'] = forms.UUIDField(required=False, widget=forms.HiddenInput)
+            self.fields['procedure_source_version'] = forms.IntegerField(required=False, widget=forms.HiddenInput)
+            self.fields['procedure_reconciled'] = forms.BooleanField(required=False, label='I compared the selected control’s current procedure and reconciled this snapshot.', help_text='Required if the prefilled source changed. Your custom procedure will be kept.')
+        if kind != 'action' or creating:
+            self.fields['reason'].help_text = ''
+
         if kind == 'engagement' and creating:
             self.fields['code'] = forms.CharField(required=False, max_length=40, help_text=HELP['code'])
             self.order_fields(['code'] + list(self.fields))
@@ -58,12 +67,32 @@ class RecordForm(forms.ModelForm):
         if kind in ('evidence', 'action'):
             self.fields['description'].required = True
         for name, (model, *_rest) in RELATIONS.get(kind, {}).items():
-            self.fields[name] = RelatedChoice(queryset=model.objects.filter(engagement=engagement), required=False,
+            self.fields[name] = RelatedChoice(queryset=model.objects.filter(engagement=engagement).select_related('control') if name == 'tests' else model.objects.filter(engagement=engagement), required=False,
                                               widget=forms.CheckboxSelectMultiple, label=name.replace('_', ' ').capitalize(),
                                               help_text='Select records within this engagement. Evidence labels show review status.')
             if not creating:
                 self.initial[name] = list(getattr(self.instance, name).values_list('pk', flat=True))
-        self.order_fields([f for f in self.fields if f not in ('actor', 'reason', 'version')] + ['actor', 'reason', 'version'])
+        if kind == 'finding':
+            self.fields['tests'].help_text = 'Tests are labelled by their owning control. Select every owning control above; selections are retained if validation fails.'
+        closure = [n for n in self.fields if n.startswith(('closure_', 'resolution_'))]
+        supporting = [n for n in RELATIONS.get(kind, {}) if n not in closure]
+        drafting = [n for n in self.fields if n not in closure + supporting + ['actor', 'reason', 'version']]
+        self.order_fields(drafting + supporting + closure + ['actor', 'reason', 'version'])
+        self.section_starts = {}
+        for title, names in [('Drafting', drafting), ('Supporting relationships', supporting), ('Closure verification', closure), ('Save details', ['actor'])]:
+            visible = [n for n in names if not self.fields[n].widget.is_hidden]
+            if visible:
+                self.section_starts[visible[0]] = title
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.instance.kind == 'test' and self.instance._state.adding:
+            source = cleaned.get('procedure_source_id')
+            version = cleaned.get('procedure_source_version')
+            if bool(source) != bool(version):
+                raise forms.ValidationError('The procedure source is incomplete. Reload and reconcile this form.')
+        return cleaned
+
 
 
 FORM_CLASSES = {kind: type(f'{model.__name__}Form', (RecordForm,), {

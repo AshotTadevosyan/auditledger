@@ -1,6 +1,6 @@
 'use strict';
 document.querySelectorAll('form[data-unsaved]').forEach(form => {
-  let dirty = false;
+  let dirty = form.dataset.dirty === 'true';
   form.addEventListener('input', () => { dirty = true; });
   form.addEventListener('change', () => { dirty = true; });
   form.addEventListener('submit', () => { dirty = false; });

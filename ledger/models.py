@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 from urllib.parse import urlsplit
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxLengthValidator
@@ -102,7 +103,8 @@ class Control(ScopedRecord):
 
     @property
     def latest_result(self):
-        test = self.test_set.filter(status='completed').order_by('-execution_date', '-created_at', '-id').first()
+        tests = [t for t in self.test_set.all() if t.status == 'completed']
+        test = max(tests, key=lambda t: (t.execution_date or date.min, t.created_at, str(t.pk)), default=None)
         return test.get_result_display() if test else 'Not tested'
 
 

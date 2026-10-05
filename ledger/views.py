@@ -167,7 +167,7 @@ def register(request, engagement_id, kind):
         'control': ['Control', 'Owner', 'Framework references', 'Latest completed result', 'Disposition'],
         'test': ['Test', 'Control', 'Tester', 'Execution', 'Result / state'],
         'evidence': ['Reference', 'Type', 'Source', 'Owner', 'Review'],
-        'finding': ['Finding', 'Severity', 'Owner', 'Actions', 'Status'],
+        'finding': ['Finding', 'Related controls', 'Severity', 'Owner', 'Actions', 'Status'],
         'action': ['Action', 'Finding', 'Owner', 'Due date', 'Status'],
     }[kind]
     for obj in page_ctx['page']:
@@ -180,6 +180,7 @@ def register(request, engagement_id, kind):
         elif kind == 'evidence':
             cells += [{'text': obj.get_type_display()}, {'text': obj.source}, {'text': obj.owner}, {'text': obj.get_review_status_display(), 'badge': obj.review_status}]
         elif kind == 'finding':
+            cells += [{'links': list(obj.controls.all())}]
             cells += [{'text': obj.get_severity_display(), 'badge': obj.severity}, {'text': obj.owner or 'Not provided'}, {'text': str(obj.actions.count()), 'url': reverse('register', args=[e.pk, 'action']) + '?' + urlencode({'finding': obj.pk})}, {'text': obj.get_status_display(), 'badge': obj.status}]
         else:
             cells += [{'text': obj.finding.code, 'url': obj.finding.get_absolute_url()}, {'text': obj.owner}, {'text': obj.due_date.isoformat() + (' · Overdue' if obj.overdue else ''), 'badge': 'overdue' if obj.overdue else ''}, {'text': obj.get_status_display(), 'badge': obj.status}]
@@ -203,6 +204,8 @@ def operations(obj):
             add(target, labels[target])
         if obj.status in ('draft', 'completed'):
             add('archive', 'Archive engagement')
+        return result
+    if obj.kind == 'action' and obj.finding.status != 'open':
         return result
     if not obj.engagement.editable:
         return result
@@ -245,6 +248,8 @@ def detail(request, engagement_id, kind, pk):
         related += [{'label': 'Used by', 'records': services.evidence_usage(obj)}]
         fields += [{'label': 'Reviewer', 'value': obj.reviewer}, {'label': 'Review date', 'value': obj.reviewed_on}, {'label': 'Review note', 'value': obj.review_note}, {'label': 'Rejection reason', 'value': obj.rejection_reason}]
     can_edit = e.editable and not (kind in ('test', 'action') and obj.status == 'completed') and not (kind == 'finding' and obj.status in ('resolved', 'withdrawn'))
+    if kind == 'action' and obj.finding.status != 'open':
+        can_edit = False
     return render(request, 'ledger/detail.html', context(e, 'control' if kind == 'test' else kind,
                   obj=obj, kind=kind, label=LABELS[kind], fields=fields, related=related, operations=operations(obj),
                   can_edit=can_edit, issues=services.entity_errors(obj),
@@ -267,6 +272,11 @@ def edit(request, engagement_id=None, kind='engagement', pk=None):
             initial[parent] = parent_obj
             if kind == 'test':
                 initial['procedure_snapshot'] = parent_obj.testing_procedure
+                initial['procedure_source_id'] = parent_obj.pk
+                initial['procedure_source_version'] = parent_obj.version
+    if kind == 'finding' and not pk and request.GET.get('test'):
+        source_test = get_object_or_404(Test, pk=request.GET['test'], engagement=e)
+        initial.update(controls=[source_test.control_id], tests=[source_test.pk], evidence=list(source_test.evidence.all()))
     form = FORM_CLASSES[kind](request.POST or None, instance=obj, engagement=e, initial=initial)
     response_status = 200
     if request.method == 'POST' and form.is_valid():
@@ -276,7 +286,8 @@ def edit(request, engagement_id=None, kind='engagement', pk=None):
         relations = {name: list(form.cleaned_data[name]) for name in RELATIONS.get(kind, {})}
         try:
             saved = services.save_record(kind, data, form.cleaned_data['actor'], e.pk if e else None, pk,
-                                         form.cleaned_data['version'], relations, form.cleaned_data['reason'])
+                                         form.cleaned_data['version'], relations, form.cleaned_data['reason'],
+                                         procedure_source=(form.cleaned_data.get('procedure_source_id'), form.cleaned_data.get('procedure_source_version'), form.cleaned_data.get('procedure_reconciled')) if kind == 'test' and not pk and form.cleaned_data.get('procedure_source_id') else None)
             return redirect(saved.get_absolute_url() + '?saved=1')
         except (ValidationError, DatabaseError) as error:
             add_errors(form, error)

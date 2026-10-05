@@ -15,3 +15,7 @@ def event_url(event):
     if event.entity_type == 'engagement':
         return reverse('overview', args=[event.engagement_id])
     return reverse('detail', args=[event.engagement_id, event.entity_type, event.entity_id])
+
+@register.filter
+def section_title(form, name):
+    return getattr(form, 'section_starts', {}).get(name, '')
