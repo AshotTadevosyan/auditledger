@@ -293,9 +293,10 @@ class WorkflowTests(TestCase):
             TestEvidence.objects.create(engagement=self.e, test=t, evidence=foreign)
         with self.assertRaises(IntegrityError), transaction.atomic():
             Test.objects.filter(pk=t.pk).update(engagement=other)
-        with connection.cursor() as cursor:
-            cursor.execute('PRAGMA foreign_keys')
-            self.assertEqual(cursor.fetchone()[0], 1)
+        if connection.vendor == 'sqlite':
+            with connection.cursor() as cursor:
+                cursor.execute('PRAGMA foreign_keys')
+                self.assertEqual(cursor.fetchone()[0], 1)
         with self.assertRaises(ValidationError):
             s.save_record('test', {'control': t.control}, self.actor, other.pk)
 

@@ -9,6 +9,8 @@ class Command(BaseCommand):
         parser.add_argument('destination', help='New .sqlite3 file; existing files will not be overwritten.')
 
     def handle(self, *args, **options):
+        if settings.DATABASES['default']['ENGINE'] != 'django.db.backends.sqlite3':
+            raise CommandError('backup_audit is SQLite-only. Use pg_dump for PostgreSQL; see DEPLOYMENT.md.')
         try:
             manifest = consistent_copy(settings.DATABASES['default']['NAME'], options['destination'], 'backup')
         except Exception as exc:

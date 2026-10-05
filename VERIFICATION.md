@@ -69,3 +69,20 @@ The regression permits at most five added queries and currently observes zero gr
 ### Remaining verification boundaries
 
 No native operating-system print dialog, physical printer, Safari/Firefox rerun, full screen-reader audit, physical mobile device, or Windows/Linux browser verification was performed in this remediation pass. Chrome's print renderer/PDF was exercised rather than claiming an OS print-preview test. Browser pagination varies. Complete before/after history can still make reports long; it is retained intentionally and remains fully machine-readable in CSV. Optional browser dependencies are not application dependencies. No hosting, deployment, authentication, AI, uploads, integrations or other deferred features were introduced. Passing checks do not establish production readiness, identity assurance or tamper-proof history.
+
+## Authenticated Render preparation (2026-10-05)
+
+No Render resources were created, no Blueprint was synced and nothing was deployed. The configuration was checked against current official Render/Django/WhiteNoise documentation; YAML parsing succeeded locally. Provider-side Blueprint provisioning/validation, real Render TLS routing, custom DNS and production monitoring remain deployment-time checks.
+
+Verification performed for this change:
+
+- Full SQLite suite: 59 tests discovered, 57 passed and 2 PostgreSQL-only concurrency tests skipped.
+- Full PostgreSQL 17 suite in a disposable local Docker database: 59 tests passed, including fresh migrations, existing workflow/integrity tests and concurrent create/edit tests.
+- Hosted tests cover anonymous access to every data/mutation route, login/logout and CSRF, safe login redirects, secure cookies, viewer/editor access, superuser access, immediate membership revocation, inactive accounts, hidden dashboard data, cross-engagement object IDs, forged actor/progress-author submissions, creator membership, and rollback when membership creation fails.
+- Hosted configuration fails closed without required variables or if Render is forced into local mode. `check --deploy --fail-level WARNING` passed without warnings using hosted settings. Database-aware public health responses and generic outage responses were verified.
+- `collectstatic` in hosted mode succeeded. With `DEBUG=False`, the login page rendered and WhiteNoise served nonempty hashed CSS and JavaScript; a data-file URL returned 404. Gunicorn's `--check-config` passed. Actual Render process startup/edge routing has not been exercised.
+- `makemigrations --check --dry-run` reports no missing migrations; `git diff --check` passed.
+- A temporary consistent copy of the existing `data/audit.sqlite3` was migrated and checked with `verify_audit`. Every original ledger table row compared equal before/after, and the original database file's SHA-256 was unchanged. The live local database was not migrated or replaced.
+- Synthetic demo records were exported from SQLite with the documented `dumpdata` exclusions, imported into fresh PostgreSQL with `loaddata`, and checked with `verify_audit`. All serialized ledger records matched exactly. A full `pg_dump` custom archive was restored with `pg_restore --single-transaction --exit-on-error` into another empty database; migrations, relationship/report verification and the exact serialized-record comparison passed again.
+
+Reproduce the suites with `.venv/bin/python manage.py test --noinput` for SQLite and the same command with `DATABASE_URL` pointing to a disposable PostgreSQL database for PostgreSQL. The test database user needs database-creation permission. Never point test or rehearsal commands at production. Hosted settings additionally require `AUDIT_MODE=hosted`, `AUDIT_SECRET_KEY`, and the appropriate TLS/host settings described in [DEPLOYMENT.md](DEPLOYMENT.md).

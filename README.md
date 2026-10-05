@@ -1,6 +1,6 @@
 # Audit Ledger
 
-A local IT audit workspace with persistent engagements, controls, test executions, evidence **references**, findings, remediation, readiness checks and reports. Runs offline after installing its three pinned Python dependencies. There are no external APIs, uploads, email, framework catalogs or paid services.
+An IT audit workspace with persistent engagements, controls, test executions, evidence **references**, findings, remediation, readiness checks and reports. Runs locally offline after installing its pinned Python dependencies, or in authenticated hosted mode. There are no external audit APIs, document uploads, email integrations or framework catalogs. Hosted deployment uses paid Render infrastructure.
 
 ## Start here
 
@@ -56,6 +56,10 @@ Completed records require an explicit reason to reopen. Completed engagements mu
 
 The dashboard and registers include search, filters, deterministic ordering and 20-row pagination. Each engagement has Overview, Controls & Tests, Evidence, Findings, Remediation, Report and History navigation. Failed saves retain submitted input and report errors. A stale version returns a conflict; open the current record in another tab, copy/reconcile your changes, and reload the form before saving. Forms warn before discarding unsaved input.
 
+## Deployment
+
+[DEPLOYMENT.md](DEPLOYMENT.md) covers the Render Blueprint, authenticated engagement access, HTTPS/static settings, account provisioning, SQLite-to-PostgreSQL transfer, backups and recovery. Deployment is manual and requires explicit owner approval; automatic deploys are disabled.
+
 ## Configuration and local operating assumptions
 
 `.env` is a shell environment example, **not automatically loaded** by Django. Load it as shown above each time, or configure your shell/service environment. Relative database paths resolve against the repository root.
@@ -69,13 +73,13 @@ The dashboard and registers include search, filters, deterministic ordering and 
 
 The example environment chooses `Asia/Yerevan`. Timestamps are persisted in UTC. Audit periods and due dates may be future dates; completed collection/execution/review/verification dates may not. Due today is **not overdue** in the configured timezone.
 
-**No authentication is implemented. This is a single-operator, loopback-only application.** The UI discloses this, and middleware rejects non-loopback peer addresses. Bind the server to `127.0.0.1`, never `0.0.0.0`. Do not put this app behind a public/LAN reverse proxy: a local proxy can make remote traffic appear to originate on loopback.
+**Default local mode is single-operator and loopback-only, without login.** The UI discloses this, and middleware rejects non-loopback peer addresses. Bind the server to `127.0.0.1`, never `0.0.0.0`. Do not put local mode behind a public/LAN reverse proxy: a local proxy can make remote traffic appear to originate on loopback.
 
 CSRF checks, safe host defaults, same-origin forms, a restrictive Content Security Policy, escaped templates, no-store responses and foreign keys are enabled. Normal request access logging is disabled to avoid logging sensitive search terms. No CORS permission is granted. Keep the machine, account and database location access-controlled. The app sets a restrictive process umask, creates its data directory with mode 0700 and new data/backup files with restrictive permissions. Existing directories retain their permissions; secure any custom location yourself.
 
 Storage, backups and exports are **not encrypted by the application**. Local operation does not protect data from other processes/users with filesystem access. Owners/reviewers are self-asserted text labels and are not authenticated identities. The activity log is application history, **not tamper-proof logging**: database administrators can change it, and restores can roll it back. This software does not certify regulatory compliance, document integrity or assurance.
 
-A network or multi-user deployment requires a separately designed authentication/authorization model, engagement membership enforced on every record and export, HTTPS, production serving/session settings and operational backup ownership. These are deliberately outside this local MVP.
+Network deployment uses `AUDIT_MODE=hosted`, PostgreSQL, password login and per-engagement viewer/editor membership enforced on all records and exports. See [DEPLOYMENT.md](DEPLOYMENT.md) for the required configuration and operational backup ownership. Local mode continues to use SQLite and self-asserted actor labels.
 
 ## Data integrity and implementation decisions
 
@@ -116,7 +120,7 @@ The end-to-end script needs permission to bind a loopback port. It uses temporar
 
 The automated suite covers validation, uniqueness, dates/timezone boundaries, invalid transitions, evidence protection/review reset, closure prerequisites, version conflicts, history rollback, foreign-key/scope enforcement, deletion, all page rendering, HTTP forms, CSRF/local-host restrictions, CSV quoting/formula protection, Unicode/HTML/Markdown escaping and empty exports.
 
-See [VERIFICATION.md](VERIFICATION.md) for the checks actually performed and manual verification scope. Tests cover the local MVP; they are not a security certification or a multi-user assessment.
+See [VERIFICATION.md](VERIFICATION.md) for the checks actually performed and manual verification scope. Tests cover local workflows, hosted authentication/authorization and database integrity on SQLite and PostgreSQL; they are not a security certification.
 
 ## Backup, restore and upgrades
 

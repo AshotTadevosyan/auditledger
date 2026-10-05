@@ -322,3 +322,15 @@ class ActivityEvent(models.Model):
 
 MODELS = {m.kind: m for m in [Engagement, Control, Test, Evidence, Finding, Action]}
 PREFIXES = {'engagement': 'ENG', 'control': 'CTL', 'test': 'TST', 'evidence': 'EVD', 'finding': 'FND', 'action': 'ACT'}
+
+
+class EngagementMembership(models.Model):
+    engagement = models.ForeignKey(Engagement, on_delete=models.CASCADE, related_name='memberships')
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE)
+    role = models.CharField(max_length=10, choices=[('viewer', 'Viewer'), ('editor', 'Editor')])
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['engagement', 'user'], name='unique_engagement_member'),
+            models.CheckConstraint(condition=Q(role__in=['viewer', 'editor']), name='membership_role'),
+        ]

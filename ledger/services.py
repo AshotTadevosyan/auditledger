@@ -157,7 +157,9 @@ def editable(engagement):
 
 def get_current(kind, pk, engagement_id, version):
     model = MODELS[kind]
-    query = model.objects.filter(pk=pk)
+    # Serialize all changes within an engagement, including readiness checks.
+    Engagement.objects.select_for_update().get(pk=pk if kind == 'engagement' else engagement_id)
+    query = model.objects.select_for_update().filter(pk=pk)
     if kind != 'engagement':
         query = query.filter(engagement_id=engagement_id)
     obj = query.get()
@@ -177,7 +179,7 @@ def bump(obj):
 
 def generate_code(kind, engagement=None):
     scope = f'{engagement.pk if engagement else "global"}:{kind}'
-    sequence, _ = CodeSequence.objects.get_or_create(scope=scope)
+    sequence, _ = CodeSequence.objects.select_for_update().get_or_create(scope=scope)
     while True:
         sequence.value += 1
         sequence.save(update_fields=['value'])
@@ -248,7 +250,7 @@ def save_record(kind, data, actor, engagement_id=None, pk=None, version=None, re
     relations = relations or {}
     creating = pk is None
     if creating:
-        engagement = Engagement.objects.get(pk=engagement_id) if kind != 'engagement' else None
+        engagement = Engagement.objects.select_for_update().get(pk=engagement_id) if kind != 'engagement' else None
         if engagement:
             editable(engagement)
         obj = MODELS[kind]()

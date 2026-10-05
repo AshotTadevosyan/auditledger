@@ -2,7 +2,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from django.db.models import Q, Count
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -11,7 +11,7 @@ from django.utils import timezone
 from django.views.decorators.http import require_http_methods
 from . import services
 from .forms import FORM_CLASSES, TransitionForm, ProgressForm
-from .models import MODELS, Engagement, Control, Test, Evidence, Finding, Action, ActivityEvent
+from .models import MODELS, Engagement, Control, Test, Evidence, Finding, Action, ActivityEvent, EngagementMembership
 from .schema import FIELDS, RELATIONS, LABELS, TABS
 from .reports import build_report, markdown_report, csv_bundle, safe_filename, REFERENCE_NOTICE, HISTORY_NOTICE
 
@@ -19,7 +19,17 @@ from .reports import build_report, markdown_report, csv_bundle, safe_filename, R
 def common_context(request):
     return {'today': timezone.localdate(), 'local_timezone': settings.TIME_ZONE,
             'reference_notice': REFERENCE_NOTICE, 'history_notice': HISTORY_NOTICE,
-            'app_version': settings.APP_VERSION}
+            'app_version': settings.APP_VERSION, 'hosted': settings.HOSTED,
+            'can_write': getattr(request, 'can_edit', not settings.HOSTED),
+            'can_create_engagement': not settings.HOSTED or request.user.has_perm('ledger.add_engagement')}
+
+
+def bind_actor(form, request, field='actor'):
+    if settings.HOSTED:
+        form.fields[field].initial = f'user:{request.user.pk}:{request.user.get_username()}'
+        form.fields[field].disabled = True
+        form.fields[field].help_text = 'Recorded from your signed-in account.'
+    return form
 
 
 def context(e, tab, **extra):
@@ -56,7 +66,10 @@ def add_errors(form, error):
 
 
 def dashboard(request):
-    query = Engagement.objects.all()
+    visible = Engagement.objects.all()
+    if settings.HOSTED and not request.user.is_superuser:
+        visible = visible.filter(memberships__user=request.user)
+    query = visible
     archived = request.GET.get('archived', '')
     if archived == 'yes':
         query = query.filter(archived_at__isnull=False)
@@ -79,17 +92,17 @@ def dashboard(request):
         e.open_count = Finding.objects.filter(engagement=e, status='open').count()
         e.overdue_count = Action.objects.filter(engagement=e, due_date__lt=timezone.localdate()).exclude(status='completed').count()
         rows.append(e)
-    active = Engagement.objects.filter(archived_at__isnull=True)
+    active = visible.filter(archived_at__isnull=True)
     stats = {'engagements': active.count(), 'active': active.filter(status='active').count(),
-             'open_findings': Finding.objects.filter(engagement__archived_at__isnull=True, status='open').count(),
-             'overdue': Action.objects.filter(engagement__archived_at__isnull=True, due_date__lt=timezone.localdate()).exclude(status='completed').count()}
+             'open_findings': Finding.objects.filter(engagement__in=active, status='open').count(),
+             'overdue': Action.objects.filter(engagement__in=active, due_date__lt=timezone.localdate()).exclude(status='completed').count()}
     return render(request, 'ledger/dashboard.html', {**page_ctx, 'rows': rows, 'stats': stats,
-                  'statuses': Engagement.STATUS, 'owners': Engagement.objects.values_list('owner', flat=True).distinct().order_by('owner')})
+                  'statuses': Engagement.STATUS, 'owners': visible.values_list('owner', flat=True).distinct().order_by('owner')})
 
 
 def overview(request, engagement_id):
     e = get_object_or_404(Engagement, pk=engagement_id)
-    return render(request, 'ledger/overview.html', context(e, 'overview', ready=services.readiness(e), operations=operations(e),
+    return render(request, 'ledger/overview.html', context(e, 'overview', ready=services.readiness(e), operations=operations(e) if request.can_edit else [],
                   recent=e.activityevent_set.all()[:5]))
 
 
@@ -251,10 +264,10 @@ def detail(request, engagement_id, kind, pk):
     if kind == 'action' and obj.finding.status != 'open':
         can_edit = False
     return render(request, 'ledger/detail.html', context(e, 'control' if kind == 'test' else kind,
-                  obj=obj, kind=kind, label=LABELS[kind], fields=fields, related=related, operations=operations(obj),
+                  obj=obj, kind=kind, label=LABELS[kind], fields=fields, related=related, operations=operations(obj) if request.can_edit else [],
                   can_edit=can_edit, issues=services.entity_errors(obj),
                   events=e.activityevent_set.filter(entity_id=obj.pk)[:10],
-                  progress_form=ProgressForm(initial={'version': obj.version}) if kind == 'action' else None))
+                  progress_form=bind_actor(ProgressForm(initial={'version': obj.version}), request, 'author') if kind == 'action' else None))
 
 
 @require_http_methods(['GET', 'POST'])
@@ -278,6 +291,7 @@ def edit(request, engagement_id=None, kind='engagement', pk=None):
         source_test = get_object_or_404(Test, pk=request.GET['test'], engagement=e)
         initial.update(controls=[source_test.control_id], tests=[source_test.pk], evidence=list(source_test.evidence.all()))
     form = FORM_CLASSES[kind](request.POST or None, instance=obj, engagement=e, initial=initial)
+    bind_actor(form, request)
     response_status = 200
     if request.method == 'POST' and form.is_valid():
         data = {name: form.cleaned_data[name] for name in FIELDS[kind]}
@@ -285,9 +299,12 @@ def edit(request, engagement_id=None, kind='engagement', pk=None):
             data['code'] = form.cleaned_data['code']
         relations = {name: list(form.cleaned_data[name]) for name in RELATIONS.get(kind, {})}
         try:
-            saved = services.save_record(kind, data, form.cleaned_data['actor'], e.pk if e else None, pk,
-                                         form.cleaned_data['version'], relations, form.cleaned_data['reason'],
-                                         procedure_source=(form.cleaned_data.get('procedure_source_id'), form.cleaned_data.get('procedure_source_version'), form.cleaned_data.get('procedure_reconciled')) if kind == 'test' and not pk and form.cleaned_data.get('procedure_source_id') else None)
+            with transaction.atomic():
+                saved = services.save_record(kind, data, form.cleaned_data['actor'], e.pk if e else None, pk,
+                                             form.cleaned_data['version'], relations, form.cleaned_data['reason'],
+                                             procedure_source=(form.cleaned_data.get('procedure_source_id'), form.cleaned_data.get('procedure_source_version'), form.cleaned_data.get('procedure_reconciled')) if kind == 'test' and not pk and form.cleaned_data.get('procedure_source_id') else None)
+                if settings.HOSTED and kind == 'engagement' and not pk:
+                    EngagementMembership.objects.create(engagement=saved, user=request.user, role='editor')
             return redirect(saved.get_absolute_url() + '?saved=1')
         except (ValidationError, DatabaseError) as error:
             add_errors(form, error)
@@ -306,6 +323,7 @@ def transition_view(request, engagement_id, target, kind='engagement', pk=None):
     e = get_object_or_404(Engagement, pk=engagement_id)
     obj = e if kind == 'engagement' else get_object_or_404(model_for(kind), pk=pk, engagement=e)
     form = TransitionForm(request.POST or None, initial={'version': obj.version}, review=kind == 'evidence' and target == 'reviewed')
+    bind_actor(form, request)
     status = 200
     if request.method == 'POST' and form.is_valid():
         try:
@@ -325,6 +343,7 @@ def delete_view(request, engagement_id, kind, pk):
     e = get_object_or_404(Engagement, pk=engagement_id)
     obj = get_object_or_404(model_for(kind), pk=pk, engagement=e)
     form = TransitionForm(request.POST or None, initial={'version': obj.version})
+    bind_actor(form, request)
     if request.method == 'POST' and form.is_valid():
         try:
             services.delete_record(kind, pk, e.pk, form.cleaned_data['version'], form.cleaned_data['actor'], form.cleaned_data['confirmed'])
@@ -340,6 +359,7 @@ def progress(request, engagement_id, pk):
     e = get_object_or_404(Engagement, pk=engagement_id)
     obj = get_object_or_404(Action, pk=pk, engagement=e)
     form = ProgressForm(request.POST)
+    bind_actor(form, request, 'author')
     if form.is_valid():
         try:
             services.add_progress(pk, engagement_id, form.cleaned_data['version'], form.cleaned_data['author'], form.cleaned_data['text'])

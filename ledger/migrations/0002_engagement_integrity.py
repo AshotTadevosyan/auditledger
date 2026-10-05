@@ -19,6 +19,9 @@ PARENTS = {
 
 
 def create(apps, schema_editor):
+    # PostgreSQL constraints are installed by 0004. Keep existing SQLite triggers.
+    if schema_editor.connection.vendor != 'sqlite':
+        return
     for table in SCOPED:
         schema_editor.execute(f'''CREATE TRIGGER ledger_{table}_scope_immutable
             BEFORE UPDATE OF engagement_id ON ledger_{table}
@@ -33,6 +36,8 @@ def create(apps, schema_editor):
 
 
 def drop(apps, schema_editor):
+    if schema_editor.connection.vendor != 'sqlite':
+        return
     for table in SCOPED:
         schema_editor.execute(f'DROP TRIGGER IF EXISTS ledger_{table}_scope_immutable')
     for table in PARENTS:

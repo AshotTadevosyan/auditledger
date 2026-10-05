@@ -1,7 +1,10 @@
 from django.urls import include, path
-from django.contrib.staticfiles.urls import staticfiles_urlpatterns
-from django.contrib.staticfiles.views import serve
+from django.contrib.auth.views import LogoutView
+from ledger.auth_views import LedgerLoginView, health
 
-urlpatterns = [path('', include('ledger.urls'))]
-# Local-only application; serve packaged assets even with DEBUG=False.
-urlpatterns += [path('static/<path:path>', serve, {'insecure': True})]
+urlpatterns = [
+    path('healthz/', health, name='health'),
+    path('accounts/login/', LedgerLoginView.as_view(), name='login'),
+    path('accounts/logout/', LogoutView.as_view(), name='logout'),
+    path('', include('ledger.urls')),
+]
